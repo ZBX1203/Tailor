@@ -24,6 +24,9 @@ func (p *Consensus) handleBlsPhase(n int, content []byte) {
 	if !validConfig(r) {
 		return
 	}
+	if !senderIsLeader(r) || len(r.Proof.GetBlsSignatures()) == 0 || r.Proof.BlsSignatures[0].NodeId != r.NodeId {
+		return
+	}
 	if !declaredPattern(r, n, "BLS") {
 		log.Printf("[%s] phase%d BLS: pattern not declared by configuration %q, rejecting", p.node.nodeID, n, cfgOf(r))
 		return
@@ -46,7 +49,9 @@ func (p *Consensus) handleBlsPhase(n int, content []byte) {
 		}
 
 		if isNoop(r) {
-			p.acceptNoop(r)
+			if !p.acceptNoop(r) {
+				return
+			}
 		} else if !p.ingestBatchRefs(r) {
 			return
 		}
@@ -128,7 +133,7 @@ func (p *Consensus) handleBlsAgg(n int, content []byte) {
 
 func (p *Consensus) processBlsAgg(phaseN int, r *Message) {
 	batchID := r.BatchInfo.BatchDigest
-	if !validConfig(r) || !declaredPattern(r, phaseN, "BLS") {
+	if !validConfig(r) || !declaredPattern(r, phaseN, "BLS") || r.GetView() < viewFloor.Load() {
 		return
 	}
 	pl := msgPayload(r, phaseN, batchID)

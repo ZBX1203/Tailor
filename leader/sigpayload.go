@@ -88,6 +88,9 @@ var voteMu sync.Mutex
 var voted = map[string]voteRecord{}
 
 func voteGuard(node string, view int64, mid int64, phase int, tuple string) bool {
+	if view < viewFloor.Load() {
+		return false
+	}
 	k := node + "|" + strconv.FormatInt(mid, 10) + "/" + strconv.Itoa(phase)
 	voteMu.Lock()
 	defer voteMu.Unlock()

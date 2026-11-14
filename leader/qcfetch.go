@@ -79,6 +79,10 @@ func (p *Consensus) handleQCResponse(content []byte) {
 	if !p.VerifyQC(q) {
 		return
 	}
+	if q.View < viewFloor.Load() {
+		p.vcRecordQC(q)
+		return
+	}
 	p.injectRsaQC(q)
 }
 

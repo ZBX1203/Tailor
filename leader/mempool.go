@@ -41,8 +41,8 @@ func (m *Mempool) Add(req *pb.Request) {
 	expected := p.base + uint64(len(p.reqs))
 	if seq != expected {
 		p.mu.Unlock()
-		log.Fatalf("[mempool] seq not contiguous client=%d seq=%d expected=%d (stream disconnected without resend? see change 4)",
-			clientID, seq, expected)
+		log.Printf("[mempool] non-contiguous request from client=%d seq=%d expected=%d, dropped", clientID, seq, expected)
+		return
 	}
 	p.reqs = append(p.reqs, req)
 	p.digests = append(p.digests, getDigestMempool(req))
@@ -88,7 +88,7 @@ func (m *Mempool) fetch(cid uint32, lo, hi uint64) ([]*pb.Request, [][32]byte, b
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	top := p.base + uint64(len(p.reqs))
-	if lo < p.base || hi >= top {
+	if lo > hi || lo < p.base || hi >= top {
 		return nil, nil, false
 	}
 	s, e := int(lo-p.base), int(hi-p.base)

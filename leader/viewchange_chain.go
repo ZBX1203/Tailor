@@ -282,3 +282,14 @@ func (p *Consensus) noteDelivered(refs []*pb.ClientRange) {
 	}
 	p.chainMu.Unlock()
 }
+
+func (p *Consensus) acceptedForVote(r *Message, digest string) bool {
+	if isChainBlock(r) {
+		p.chainMu.Lock()
+		m := p.chainMsgs[r.MessageId]
+		ok := m != nil && m.BatchInfo != nil && m.BatchInfo.BatchDigest == digest && m.GetView() == r.GetView()
+		p.chainMu.Unlock()
+		return ok && p.chainParentReady(r)
+	}
+	return p.acceptedFor(r, digest)
+}

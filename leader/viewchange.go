@@ -41,7 +41,7 @@ func nodeOrder() []string {
 
 func leaderOf(v int64) string {
 	ns := nodeOrder()
-	if len(ns) == 0 {
+	if len(ns) == 0 || v < 0 {
 		return "N0"
 	}
 	return ns[int(v%int64(len(ns)))]
@@ -169,7 +169,7 @@ func (p *Consensus) vcRecordProposal(r *Message) {
 		in = &vcInstance{qc: map[int32]*pb.QCProof{}}
 		p.vc.inst[r.MessageId] = in
 	}
-	if in.prop == nil || in.prop.GetView() <= c.GetView() {
+	if in.prop == nil || in.prop.GetView() < c.GetView() {
 		in.prop = c
 	}
 	if r.MessageId > p.vc.maxMid {
@@ -199,6 +199,30 @@ func (p *Consensus) vcRecordQC(q *pb.QCProof) {
 	if old := in.qc[q.Phase]; old == nil || old.View < q.View {
 		in.qc[q.Phase] = q
 	}
+}
+
+func (p *Consensus) vcCanAccept(v int64, mid int64, d string) bool {
+	if p.vc == nil {
+		return true
+	}
+	p.vc.mu.Lock()
+	defer p.vc.mu.Unlock()
+	if old := p.vc.committedUpto - vcRetain; mid <= old {
+		return false
+	}
+	in := p.vc.inst[mid]
+	return in == nil || in.prop == nil || in.prop.GetView() != v || in.prop.BatchInfo.BatchDigest == d
+}
+
+func (p *Consensus) acceptedFor(r *Message, digest string) bool {
+	if p.vc == nil {
+		return true
+	}
+	p.vc.mu.Lock()
+	defer p.vc.mu.Unlock()
+	in := p.vc.inst[r.MessageId]
+	return in != nil && in.prop != nil && in.prop.GetView() == r.GetView() &&
+		in.prop.BatchInfo.BatchDigest == digest && cfgOf(in.prop) == cfgOf(r)
 }
 
 func (p *Consensus) acceptedDigest(mid int64) (string, bool) {
@@ -233,6 +257,7 @@ func (p *Consensus) vcFirstDelivery(mid int64) bool {
 		old := p.vc.committedUpto - vcRetain
 		delete(p.vc.inst, old)
 		delete(p.vc.delivered, old)
+		voteForget(p.node.nodeID, old)
 	}
 	p.vc.lastProgress.Store(time.Now().UnixNano())
 	return true
@@ -444,7 +469,7 @@ func (p *Consensus) handleViewChange(content []byte) {
 		return
 	}
 	v := vc.NewView
-	if leaderOf(v) != p.node.nodeID || v <= curView.Load() {
+	if v <= curView.Load() || leaderOf(v) != p.node.nodeID {
 		return
 	}
 	p.vc.mu.Lock()
@@ -467,7 +492,6 @@ func (p *Consensus) handleViewChange(content []byte) {
 		p.vc.mu.Unlock()
 		return
 	}
-	p.vc.newViewSent[v] = true
 	reports := make([]*pb.ViewChange, 0, len(p.vc.reports[v]))
 	for _, r := range p.vc.reports[v] {
 		reports = append(reports, r)
@@ -478,9 +502,16 @@ func (p *Consensus) handleViewChange(content []byte) {
 	nv := &pb.NewView{View: v, Leader: p.node.nodeID, Reports: reports}
 	sel, ok := p.selectReproposals(reports, v)
 	if !ok {
-		log.Printf("[%s] VIEWCHANGE: reports for view %d do not determine all re-proposals", p.node.nodeID, v)
+		log.Printf("[%s] VIEWCHANGE: reports for view %d do not determine all re-proposals; waiting for more", p.node.nodeID, v)
 		return
 	}
+	p.vc.mu.Lock()
+	if p.vc.newViewSent[v] {
+		p.vc.mu.Unlock()
+		return
+	}
+	p.vc.newViewSent[v] = true
+	p.vc.mu.Unlock()
 	for _, it := range sel.items {
 		nv.Proposals = append(nv.Proposals, it.prop)
 	}
@@ -519,12 +550,13 @@ func (p *Consensus) selectReproposals(reports []*pb.ViewChange, v int64) (*selec
 	}
 	lo := ups[f]
 	hi := lo
+	limit := lo + vcRetain
 	bestQC := map[int64]*pb.QCProof{}
 	props := map[int64]map[string]*Message{}
 	for _, r := range reports {
 		for _, ir := range r.Instances {
 			mid := int64(-1)
-			if ir.Proposal != nil {
+			if ir.Proposal != nil && ir.Proposal.MessageId <= limit {
 				mid = ir.Proposal.MessageId
 				if props[mid] == nil {
 					props[mid] = map[string]*Message{}
@@ -533,11 +565,13 @@ func (p *Consensus) selectReproposals(reports []*pb.ViewChange, v int64) (*selec
 			}
 			if q := ir.FirstQc; q != nil {
 				mid = q.Mid
-				if b := bestQC[mid]; b == nil || b.View < q.View {
-					bestQC[mid] = q
+				if mid <= limit {
+					if b := bestQC[mid]; b == nil || b.View < q.View {
+						bestQC[mid] = q
+					}
 				}
 			}
-			if mid > hi {
+			if mid > hi && mid <= limit {
 				hi = mid
 			}
 		}
@@ -742,9 +776,13 @@ func (p *Consensus) leaderWake() {
 	}
 }
 
-func (p *Consensus) acceptNoop(r *Message) {
+func (p *Consensus) acceptNoop(r *Message) bool {
+	if !p.vcCanAccept(r.GetView(), r.MessageId, r.BatchInfo.BatchDigest) {
+		return false
+	}
 	p.RefsCache.Set(r.MessageId, []*pb.ClientRange{})
 	p.vcRecordProposal(r)
+	return true
 }
 
 func (p *Consensus) finishNoop(r *Message) {

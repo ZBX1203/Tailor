@@ -27,12 +27,14 @@ func (p *Consensus) handleRsaPhase(n int, content []byte) {
 		return
 	}
 	if n == 1 && isNoop(r) && senderIsLeader(r) {
-		if !p.admitReproposal(r) {
+		if !p.admitReproposal(r) || !p.acceptNoop(r) {
 			return
 		}
-		p.acceptNoop(r)
 	}
 	if n == 1 && len(r.BatchInfo.Refs) > 0 {
+		if !senderIsLeader(r) {
+			return
+		}
 		if !p.admitReproposal(r) {
 			return
 		}
@@ -124,7 +126,7 @@ func (p *Consensus) processRsaPhase(phaseN int, r *Message) {
 		return
 	}
 
-	canVote := phaseN != 1 || !isChainBlock(r) || p.chainParentReady(r)
+	canVote := phaseN != 1 || p.acceptedForVote(r, batchID)
 
 	if canVote && !state.echoed.Load() && voteGuard(p.node.nodeID, r.GetView(), r.MessageId, phaseN, key) && state.echoed.CompareAndSwap(false, true) {
 		echoID := batchID

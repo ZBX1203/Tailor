@@ -50,6 +50,9 @@ func (n *Node) requestMissingQCsLater(block *Block) {
 				n.logger.Error("broadcast QC request failed", "round", req.Round, "err", err)
 			}
 		}
+		if len(want) > 0 {
+			n.requestMissingQCsLater(block)
+		}
 	})
 }
 

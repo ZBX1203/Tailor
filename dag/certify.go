@@ -95,6 +95,10 @@ func newCertState() *certState {
 	}
 }
 
+const maxRefSpan = 1 << 22
+
+func (r ClientRange) wellFormed() bool { return r.Lo <= r.Hi && r.Hi-r.Lo < maxRefSpan }
+
 func tallyKey(author string, round uint64, digest []byte, ctype byte) string {
 	return vkey(author, round) + "|" + hex.EncodeToString(digest) + "|" + string(ctype)
 }
@@ -226,6 +230,12 @@ func (n *Node) voteAfterParents(m *ProposeMsg, digest []byte) {
 	if err := decode(m.BlockBytes, block); err != nil || block.Round != m.Round || block.Sender != m.Sender {
 		n.logger.Error("proposal does not match its position; not voting", "author", m.Sender, "round", m.Round)
 		return
+	}
+	for _, r := range block.Refs {
+		if !r.wellFormed() {
+			n.logger.Error("proposal carries a malformed reference; not voting", "author", m.Sender, "round", m.Round)
+			return
+		}
 	}
 	n.lock.Lock()
 	st := n.parentsCertifiedLocked(block)

@@ -180,6 +180,9 @@ var proposalPad = func() []byte {
 }()
 
 func (p *Consensus) transitionToNextPhase(n int, msg *Message) {
+	if msg.GetView() < viewFloor.Load() {
+		return
+	}
 	if n >= phaseCountOf(msg) {
 
 		p.finalReply(msg)
@@ -310,6 +313,9 @@ func (p *Consensus) ingestBatchRefs(r *Message) bool {
 	}
 	if isChainBlock(r) {
 		localDigest = chainDigest(localDigest, r.PhaseConfig["parent"], chainParentView(r))
+	} else if !p.vcCanAccept(r.GetView(), r.MessageId, localDigest) {
+		log.Printf("[%s] instance %d: a different proposal was already accepted in view %d, ignoring", p.node.nodeID, r.MessageId, r.GetView())
+		return false
 	}
 	r.BatchInfo.BatchDigest = localDigest
 	p.RequestsCache.Set(r.MessageId, allReqs)
@@ -526,6 +532,5 @@ func (p *Consensus) cleanupGenericState(key string, batchID string, messageId in
 	p.phase1BlsStates.Delete(key)
 	p.phase2BlsStates.Delete(key)
 	p.phase3BlsStates.Delete(key)
-	voteForget(p.node.nodeID, messageId)
 	p.cleanupConsensusState(batchID, messageId)
 }

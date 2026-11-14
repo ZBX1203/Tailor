@@ -614,7 +614,7 @@ func (p *Consensus) chainStash(r *Message, content []byte) {
 	}
 	q := chainPending{bls: r.PhaseConfig["phase1"] == "BLS", content: content}
 	if pm, err := strconv.ParseInt(r.PhaseConfig["parent_mid"], 10, 64); err == nil && (r.Proof == nil || r.Proof.BlsAggregation == nil || len(r.Proof.BlsAggregation.AggregatedSig) == 0) {
-		want := &pb.QCProof{View: r.GetView(), Mid: pm, Phase: 1, Digest: pd, Cfg: "R"}
+		want := &pb.QCProof{View: chainParentView(r), Mid: pm, Phase: 1, Digest: pd, Cfg: "R"}
 		p.requestQCLater(want, func() bool { return p.chainParentReady(r) })
 	}
 	p.chainWaitMu.Lock()
@@ -867,6 +867,10 @@ func (p *Consensus) handleReply(content []byte) {
 		p.commitOrder.advance(r.MessageId)
 		p.RefsCache.Delete(r.MessageId)
 		p.RequestsCache.Delete(r.MessageId)
+		p.completed.add(batchID)
+		p.completed.add(msgKey(r, batchID))
+		p.deletePrevProofGates(msgKey(r, batchID))
+		go p.cleanupGenericState(msgKey(r, batchID), batchID, r.MessageId)
 
 	case "RSA":
 
@@ -922,6 +926,10 @@ func (p *Consensus) handleReply(content []byte) {
 		p.commitOrder.advance(r.MessageId)
 		p.RefsCache.Delete(r.MessageId)
 		p.RequestsCache.Delete(r.MessageId)
+		p.completed.add(batchID)
+		p.completed.add(msgKey(r, batchID))
+		p.deletePrevProofGates(msgKey(r, batchID))
+		go p.cleanupGenericState(msgKey(r, batchID), batchID, r.MessageId)
 		_ = lastPhaseKey
 	}
 }
@@ -1340,6 +1348,11 @@ func (p *Consensus) chainOnProposal(r *Message) bool {
 		}
 	}
 	p.chainMu.Lock()
+	if old := p.chainMsgs[r.MessageId]; old != nil && old.GetView() == r.GetView() && old.BatchInfo.BatchDigest != r.BatchInfo.BatchDigest {
+		p.chainMu.Unlock()
+		log.Printf("[%s] chained: a different block was already accepted at height %d in view %d, ignoring", p.node.nodeID, r.MessageId, r.GetView())
+		return false
+	}
 	if !p.chainSafeToVote(r) {
 		p.chainMu.Unlock()
 		log.Printf("[%s] chained: block %d extends a QC ranked below this replica's lock, not voting", p.node.nodeID, r.MessageId)
