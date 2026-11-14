@@ -1,0 +1,159 @@
+syntax = "proto3";
+
+package merge_consensus;
+
+option go_package = "./merge_proto";
+
+service MergeConsensusService {
+  rpc SendMessage (ConsensusMessage) returns (ConsensusReply);
+
+  rpc SendMessageStream (stream ConsensusMessage) returns (ConsensusReply);
+
+  rpc SendRequest (Request) returns (ConsensusReply);
+
+  rpc SendRequestStream (stream Request) returns (ConsensusReply);
+
+  rpc SendReply (Reply) returns (ConsensusReply);
+
+  rpc SendBatchReply (BatchReply) returns (ConsensusReply);
+}
+
+message ConsensusMessage {
+  string command = 1;
+  bytes content = 2;
+}
+
+message ConsensusReply {
+  bool ok = 1;
+  string info = 2;
+}
+
+message Request {
+    string content = 1;
+    int64 req_id = 2;
+    int64 timestamp = 3;
+    string client_addr = 4;
+    bytes sign = 5;
+    bytes mac = 6;
+
+    int64 enqueue_time = 7;
+
+    uint32 client_id = 8;
+    uint64 seq = 9;
+}
+
+message ClientRange {
+    uint32 client_id = 1;
+    uint64 lo = 2;
+    uint64 hi = 3;
+    bytes digest = 4;
+
+}
+
+message BatchReply {
+    repeated RangeReply range_replies = 1;
+}
+
+message RangeReply {
+    uint32 client_id   = 1;
+    uint64 lo          = 2;
+    uint64 hi          = 3;
+    string sender_id   = 4;
+    int64  sequence_id = 5;
+    bool   result      = 6;
+    bytes  mac         = 7;
+    bytes  result_hash = 8;
+}
+
+message Reply {
+    int64 req_id = 1;
+    string sender_id = 2;
+
+    int64 sequence_id = 3;
+    bool result = 4;
+    int64 timestamp = 5;
+    bytes sign = 6;
+    bytes mac = 7;
+}
+
+message SigEntry {
+    string node_id = 1;
+    bytes signature = 2;
+}
+
+message BLSAggregation {
+    bytes aggregated_sig = 1;
+    repeated string participants = 2;
+}
+
+message Proof {
+    repeated SigEntry rsa_signatures = 1;
+    repeated SigEntry bls_signatures = 2;
+    BLSAggregation bls_aggregation = 3;
+}
+
+message BatchInfo {
+    repeated Request requests = 1;
+    int32 batch_size = 2;
+    string batch_digest = 3;
+
+    repeated ClientRange refs = 4;
+}
+
+message ConsensusPayload {
+    string message_type = 1;
+    string node_id = 2;
+    int64 timestamp = 3;
+    int64 message_id = 4;
+    bytes sigrsa = 5;
+    map<string, string> phase_config = 6;
+    BatchInfo batch_info = 7;
+    Proof proof = 8;
+    int64 view = 9;
+    QCProof justify = 10;
+}
+
+message QCProof {
+    int64 view = 1;
+    int64 mid = 2;
+    int32 phase = 3;
+    string digest = 4;
+    string cfg = 5;
+    repeated SigEntry rsa_signatures = 6;
+    BLSAggregation bls_aggregation = 7;
+}
+
+message InstanceReport {
+    ConsensusPayload proposal = 1;
+    QCProof first_qc = 2;
+    QCProof lock_qc = 3;
+}
+
+message ChainReport {
+    ConsensusPayload high_block = 1;
+    QCProof high_qc = 2;
+    QCProof lock_qc = 3;
+    repeated ConsensusPayload blocks = 4;
+}
+
+message ViewChange {
+    int64 new_view = 1;
+    string node_id = 2;
+    int64 committed_upto = 3;
+    repeated InstanceReport instances = 4;
+    ChainReport chain = 5;
+    bytes sig = 6;
+}
+
+message NewView {
+    int64 view = 1;
+    string leader = 2;
+    repeated ViewChange reports = 3;
+    repeated ConsensusPayload proposals = 4;
+    bytes sig = 5;
+}
+
+message QCRequest {
+    QCProof want = 1;
+    string from = 2;
+}
